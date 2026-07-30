@@ -1,0 +1,23 @@
+name = "sk-print"
+pages_build_output_dir = "."
+compatibility_date = "2026-07-30"
+
+# Fill the ids in after running the wrangler create commands in the README,
+# or set these as bindings in the Pages dashboard instead - either works.
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "sk-print"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sk-print"
+database_id = "REPLACE_WITH_D1_ID"
+
+[[kv_namespaces]]
+binding = "SETTINGS"
+id = "REPLACE_WITH_KV_ID"
+
+# LOGIN_PIN and SESSION_SECRET are deliberately NOT in this file - they are
+# secrets and belong in the dashboard as encrypted environment variables, or
+# via `wrangler pages secret put`.

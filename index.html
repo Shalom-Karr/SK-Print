@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SK Print</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖨️</text></svg>">
+</head>
+<body class="h-full bg-slate-50 text-slate-900 antialiased">
+
+<!-- LOGIN -->
+<div id="gate" class="hidden min-h-full items-center justify-center p-6">
+  <div class="w-full max-w-sm">
+    <div class="text-center mb-8">
+      <div class="text-5xl mb-3">🖨️</div>
+      <h1 class="text-2xl font-bold tracking-tight">SK Print</h1>
+      <p class="text-slate-500 text-sm mt-1">Enter your PIN to continue</p>
+    </div>
+    <form id="loginForm" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-4">
+      <input id="pin" type="password" inputmode="numeric" autocomplete="current-password"
+             placeholder="••••" required
+             class="w-full text-center text-2xl tracking-[0.5em] rounded-xl border border-slate-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+      <button class="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 transition">
+        Unlock
+      </button>
+      <p id="loginErr" class="hidden text-sm text-red-600 text-center"></p>
+    </form>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app" class="hidden min-h-full flex-col">
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-10">
+    <div class="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
+      <div class="flex items-center gap-2 font-bold"><span>🖨️</span><span>SK Print</span></div>
+      <div class="flex items-center gap-1">
+        <button data-tab="upload" class="tab px-4 py-1.5 rounded-lg text-sm font-medium transition">Upload</button>
+        <button data-tab="view" class="tab px-4 py-1.5 rounded-lg text-sm font-medium transition">View</button>
+        <button id="settingsBtn" title="Change PIN" class="ml-2 p-2 rounded-lg hover:bg-slate-100 transition">⚙️</button>
+        <button id="logoutBtn" title="Log out" class="p-2 rounded-lg hover:bg-slate-100 transition">⏻</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-4xl w-full mx-auto px-4 py-8">
+
+    <!-- UPLOAD -->
+    <section id="panel-upload" class="panel">
+      <label id="drop" for="fileInput"
+        class="block border-2 border-dashed border-slate-300 rounded-2xl p-12 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition">
+        <div class="text-4xl mb-3">📤</div>
+        <p class="font-semibold">Drop files here, or click to choose</p>
+        <p class="text-sm text-slate-500 mt-1">PDF, PNG, JPEG, WebP, GIF, HEIC, TIFF &middot; up to 25&nbsp;MB each</p>
+        <input id="fileInput" type="file" multiple accept="application/pdf,image/*" class="hidden">
+      </label>
+      <div id="queue" class="mt-6 space-y-2"></div>
+      <button id="uploadBtn" class="hidden mt-6 w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 transition disabled:opacity-50">
+        Upload
+      </button>
+    </section>
+
+    <!-- VIEW -->
+    <section id="panel-view" class="panel hidden">
+      <div id="fileList" class="space-y-2"></div>
+      <p id="emptyMsg" class="hidden text-center text-slate-500 py-16">Nothing uploaded yet.</p>
+    </section>
+  </main>
+</div>
+
+<!-- PIN DIALOG -->
+<dialog id="pinDialog" class="rounded-2xl p-0 backdrop:bg-slate-900/40 w-full max-w-sm">
+  <form id="pinForm" class="p-6 space-y-4">
+    <h2 class="font-bold text-lg">Change PIN</h2>
+    <input name="current" type="password" inputmode="numeric" placeholder="Current PIN" required
+           class="w-full rounded-xl border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+    <input name="next" type="password" inputmode="numeric" placeholder="New PIN (4-12 digits)"
+           pattern="\d{4,12}" required
+           class="w-full rounded-xl border border-slate-300 px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+    <p id="pinMsg" class="hidden text-sm"></p>
+    <div class="flex gap-2 pt-2">
+      <button type="button" id="pinCancel" class="flex-1 rounded-xl border border-slate-300 py-2.5 font-medium hover:bg-slate-50">Cancel</button>
+      <button class="flex-1 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = (p, o) => fetch('/api/' + p, { credentials: 'same-origin', ...o });
+let picked = [];
+
+const show = el => { el.classList.remove('hidden'); el.classList.add('flex'); };
+const hide = el => { el.classList.add('hidden'); el.classList.remove('flex'); };
+
+async function boot() {
+  const { authed } = await api('session').then(r => r.json());
+  if (authed) { hide($('#gate')); show($('#app')); $('#app').classList.add('flex-col'); loadFiles(); }
+  else { show($('#gate')); hide($('#app')); }
+}
+
+$('#loginForm').onsubmit = async e => {
+  e.preventDefault();
+  const r = await api('login', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pin: $('#pin').value })
+  });
+  if (r.ok) { $('#pin').value = ''; $('#loginErr').classList.add('hidden'); boot(); }
+  else {
+    const { error } = await r.json();
+    $('#loginErr').textContent = error || 'Login failed';
+    $('#loginErr').classList.remove('hidden');
+  }
+};
+
+$('#logoutBtn').onclick = async () => { await api('logout', { method: 'POST' }); location.reload(); };
+
+// tabs
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => setTab(b.dataset.tab));
+function setTab(name) {
+  document.querySelectorAll('.tab').forEach(b => {
+    const on = b.dataset.tab === name;
+    b.className = 'tab px-4 py-1.5 rounded-lg text-sm font-medium transition ' +
+      (on ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100');
+  });
+  $('#panel-upload').classList.toggle('hidden', name !== 'upload');
+  $('#panel-view').classList.toggle('hidden', name !== 'view');
+  if (name === 'view') loadFiles();
+}
+
+// file picking + drag/drop
+$('#fileInput').onchange = e => addFiles([...e.target.files]);
+const drop = $('#drop');
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add('border-blue-500', 'bg-blue-50');
+}));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove('border-blue-500', 'bg-blue-50');
+}));
+drop.addEventListener('drop', e => addFiles([...e.dataTransfer.files]));
+
+function addFiles(list) {
+  picked = picked.concat(list);
+  renderQueue();
+}
+function renderQueue() {
+  $('#queue').innerHTML = picked.map((f, i) => `
+    <div class="flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3">
+      <span class="text-xl">${f.type === 'application/pdf' ? '📄' : '🖼️'}</span>
+      <div class="flex-1 min-w-0">
+        <p class="font-medium truncate">${esc(f.name)}</p>
+        <p class="text-xs text-slate-500">${fmt(f.size)}</p>
+      </div>
+      <button onclick="removeFile(${i})" class="text-slate-400 hover:text-red-600 px-2">✕</button>
+    </div>`).join('');
+  $('#uploadBtn').classList.toggle('hidden', !picked.length);
+}
+window.removeFile = i => { picked.splice(i, 1); renderQueue(); };
+
+$('#uploadBtn').onclick = async () => {
+  const btn = $('#uploadBtn');
+  btn.disabled = true; btn.textContent = 'Uploading…';
+  const fd = new FormData();
+  picked.forEach(f => fd.append('files', f));
+  const r = await api('upload', { method: 'POST', body: fd });
+  const out = await r.json();
+  btn.disabled = false; btn.textContent = 'Upload';
+  if (out.rejected?.length) {
+    alert('Skipped:\n' + out.rejected.map(x => `${x.name} — ${x.reason}`).join('\n'));
+  }
+  picked = []; renderQueue(); setTab('view');
+};
+
+async function loadFiles() {
+  const { files } = await api('files').then(r => r.json());
+  $('#emptyMsg').classList.toggle('hidden', files.length > 0);
+  $('#fileList').innerHTML = files.map(f => `
+    <div class="flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3">
+      <span class="text-xl">${f.type === 'application/pdf' ? '📄' : '🖼️'}</span>
+      <div class="flex-1 min-w-0">
+        <p class="font-medium truncate">${esc(f.name)}</p>
+        <p class="text-xs text-slate-500">${fmt(f.size)} &middot; ${new Date(f.uploaded_at).toLocaleString()}</p>
+      </div>
+      <a href="/api/file/${f.id}" target="_blank" class="px-3 py-1.5 text-sm rounded-lg bg-slate-100 hover:bg-slate-200 font-medium">Open</a>
+      <a href="/api/file/${f.id}?download" class="px-3 py-1.5 text-sm rounded-lg bg-slate-100 hover:bg-slate-200 font-medium">Save</a>
+      <button onclick="del('${f.id}')" class="text-slate-400 hover:text-red-600 px-2">🗑</button>
+    </div>`).join('');
+}
+window.del = async id => {
+  if (!confirm('Delete this file?')) return;
+  await api('file/' + id, { method: 'DELETE' });
+  loadFiles();
+};
+
+// PIN change
+$('#settingsBtn').onclick = () => $('#pinDialog').showModal();
+$('#pinCancel').onclick = () => $('#pinDialog').close();
+$('#pinForm').onsubmit = async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const r = await api('pin', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ current: fd.get('current'), next: fd.get('next') })
+  });
+  const out = await r.json();
+  const msg = $('#pinMsg');
+  msg.classList.remove('hidden', 'text-red-600', 'text-green-600');
+  if (r.ok) {
+    msg.textContent = 'PIN updated.'; msg.classList.add('text-green-600');
+    e.target.reset();
+    setTimeout(() => { $('#pinDialog').close(); msg.classList.add('hidden'); }, 1200);
+  } else {
+    msg.textContent = out.error || 'Failed'; msg.classList.add('text-red-600');
+  }
+};
+
+const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = b => b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
+
+setTab('upload');
+boot();
+</script>
+</body>
+</html>
