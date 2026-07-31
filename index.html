@@ -54,7 +54,16 @@
         <p class="text-sm text-slate-500 mt-1">PDF, PNG, JPEG, WebP, GIF, HEIC, TIFF &middot; up to 25&nbsp;MB each</p>
         <input id="fileInput" type="file" multiple accept="application/pdf,image/*" class="hidden">
       </label>
-      <div id="queue" class="mt-6 space-y-2"></div>
+      <div id="queueBar" class="hidden items-center justify-between gap-3 mt-6 mb-2">
+        <p class="text-sm text-slate-500"><span id="queueCount"></span> &middot; drag to reorder</p>
+        <div class="flex items-center gap-1">
+          <button id="undoBtn" title="Undo (Ctrl+Z)"
+            class="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent transition">↶ Undo</button>
+          <button id="redoBtn" title="Redo (Ctrl+Y)"
+            class="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent transition">↷ Redo</button>
+        </div>
+      </div>
+      <div id="queue" class="space-y-2"></div>
       <button id="uploadBtn" class="hidden mt-6 w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 transition disabled:opacity-50">
         Upload
       </button>
@@ -145,13 +154,59 @@ const drop = $('#drop');
 }));
 drop.addEventListener('drop', e => addFiles([...e.dataTransfer.files]));
 
-function addFiles(list) {
-  picked = picked.concat(list);
+/* ---- undo/redo -------------------------------------------------------
+   History holds snapshots of the queue. File objects are immutable and cheap
+   to hold by reference, so a snapshot is just a copy of the array - no need to
+   record diffs or invert operations. Every mutation goes through commit(). */
+let history = [[]];
+let hIndex = 0;
+const HISTORY_MAX = 50;
+
+function commit(next) {
+  // Drop any redo branch - the timeline forks from here.
+  history = history.slice(0, hIndex + 1);
+  history.push(next);
+  if (history.length > HISTORY_MAX) history.shift();
+  hIndex = history.length - 1;
+  picked = next;
   renderQueue();
 }
+function undo() {
+  if (hIndex === 0) return;
+  hIndex--; picked = history[hIndex]; renderQueue();
+}
+function redo() {
+  if (hIndex >= history.length - 1) return;
+  hIndex++; picked = history[hIndex]; renderQueue();
+}
+$('#undoBtn').onclick = undo;
+$('#redoBtn').onclick = redo;
+
+document.addEventListener('keydown', e => {
+  if (!e.ctrlKey && !e.metaKey) return;
+  const k = e.key.toLowerCase();
+  if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+  else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
+});
+
+function addFiles(list) {
+  if (list.length) commit(picked.concat(list));
+}
+window.removeFile = i => commit(picked.filter((_, n) => n !== i));
+
 function renderQueue() {
+  const has = picked.length > 0;
+  $('#queueBar').classList.toggle('hidden', !has);
+  $('#queueBar').classList.toggle('flex', has);
+  $('#queueCount').textContent =
+    `${picked.length} file${picked.length === 1 ? '' : 's'} queued`;
+  $('#undoBtn').disabled = hIndex === 0;
+  $('#redoBtn').disabled = hIndex >= history.length - 1;
+
   $('#queue').innerHTML = picked.map((f, i) => `
-    <div class="flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3">
+    <div draggable="true" data-i="${i}"
+         class="qrow flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3 cursor-grab active:cursor-grabbing">
+      <span class="text-slate-300 select-none">⠿</span>
       <span class="text-xl">${f.type === 'application/pdf' ? '📄' : '🖼️'}</span>
       <div class="flex-1 min-w-0">
         <p class="font-medium truncate">${esc(f.name)}</p>
@@ -159,9 +214,36 @@ function renderQueue() {
       </div>
       <button onclick="removeFile(${i})" class="text-slate-400 hover:text-red-600 px-2">✕</button>
     </div>`).join('');
-  $('#uploadBtn').classList.toggle('hidden', !picked.length);
+  $('#uploadBtn').classList.toggle('hidden', !has);
+  wireDrag();
 }
-window.removeFile = i => { picked.splice(i, 1); renderQueue(); };
+
+// Reordering commits one snapshot per completed drag, not per dragover, so a
+// single drag is a single undo step rather than dozens.
+let dragFrom = null;
+function wireDrag() {
+  document.querySelectorAll('.qrow').forEach(row => {
+    row.ondragstart = e => {
+      dragFrom = Number(row.dataset.i);
+      e.dataTransfer.effectAllowed = 'move';
+      row.classList.add('opacity-40');
+    };
+    row.ondragend = () => row.classList.remove('opacity-40');
+    row.ondragover = e => { e.preventDefault(); row.classList.add('ring-2', 'ring-blue-400'); };
+    row.ondragleave = () => row.classList.remove('ring-2', 'ring-blue-400');
+    row.ondrop = e => {
+      e.preventDefault();
+      e.stopPropagation();
+      row.classList.remove('ring-2', 'ring-blue-400');
+      const to = Number(row.dataset.i);
+      if (dragFrom === null || dragFrom === to) return;
+      const next = picked.slice();
+      next.splice(to, 0, next.splice(dragFrom, 1)[0]);
+      dragFrom = null;
+      commit(next);
+    };
+  });
+}
 
 $('#uploadBtn').onclick = async () => {
   const btn = $('#uploadBtn');
@@ -174,7 +256,10 @@ $('#uploadBtn').onclick = async () => {
   if (out.rejected?.length) {
     alert('Skipped:\n' + out.rejected.map(x => `${x.name} — ${x.reason}`).join('\n'));
   }
-  picked = []; renderQueue(); setTab('view');
+  // Uploading ends the timeline: the queue is gone and undoing back to it would
+  // offer to re-upload files that are already stored.
+  history = [[]]; hIndex = 0; picked = [];
+  renderQueue(); setTab('view');
 };
 
 async function loadFiles() {
