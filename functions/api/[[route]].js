@@ -12,6 +12,15 @@
 const PIN_KEY = 'auth:pin';
 const SESSION_TTL = 60 * 60 * 24 * 7; // 7 days
 const MAX_BYTES = 25 * 1024 * 1024;
+
+// Login throttling. KV is eventually consistent (up to ~60s globally), so these
+// counters are not a hard guarantee - a burst of parallel requests can slip a
+// few extra attempts through before the write propagates. It still turns an
+// unlimited brute force into a handful of tries per window, which is the
+// difference between a 4-digit PIN falling in 40 seconds and not falling at all.
+const MAX_IP_FAILS = 5;
+const MAX_GLOBAL_FAILS = 30;
+const LOCKOUT_WINDOW = 900; // 15 minutes
 const ALLOWED = new Set([
   'application/pdf',
   'image/png',
@@ -105,12 +114,51 @@ export async function onRequest(context) {
     const pin = await currentPin(env);
     if (!pin) return json({ error: 'No PIN configured. Set LOGIN_PIN.' }, 500);
 
+    // Rate limiting has to live here. Cloudflare WAF rules only apply to zones
+    // you own, and *.pages.dev is not one - so there is no edge control to fall
+    // back on. Without this a 4-digit PIN falls in well under a minute.
+    const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+    const ipKey = `fail:ip:${ip}`;
+    const globalKey = 'fail:global';
+
+    const [ipFails, globalFails] = await Promise.all([
+      env.SETTINGS.get(ipKey).then((v) => Number(v) || 0),
+      env.SETTINGS.get(globalKey).then((v) => Number(v) || 0),
+    ]);
+
+    if (ipFails >= MAX_IP_FAILS) {
+      return json(
+        { error: 'Too many attempts. Try again later.' },
+        429,
+        { 'retry-after': String(LOCKOUT_WINDOW) }
+      );
+    }
+    // Global cap catches an attacker rotating through IPs, which defeats a
+    // purely per-IP limit.
+    if (globalFails >= MAX_GLOBAL_FAILS) {
+      return json(
+        { error: 'Locked due to repeated failed attempts. Try again later.' },
+        429,
+        { 'retry-after': String(LOCKOUT_WINDOW) }
+      );
+    }
+
     const { pin: given } = await request.json().catch(() => ({}));
     if (!given || !safeEqual(String(given), pin)) {
+      await Promise.all([
+        env.SETTINGS.put(ipKey, String(ipFails + 1), { expirationTtl: LOCKOUT_WINDOW }),
+        env.SETTINGS.put(globalKey, String(globalFails + 1), { expirationTtl: LOCKOUT_WINDOW }),
+      ]);
       // Uniform delay so a wrong PIN is not distinguishable by response time.
       await new Promise((r) => setTimeout(r, 400));
-      return json({ error: 'Incorrect PIN' }, 401);
+      const left = MAX_IP_FAILS - (ipFails + 1);
+      return json(
+        { error: left > 0 ? `Incorrect PIN. ${left} attempt${left === 1 ? '' : 's'} left.` : 'Incorrect PIN.' },
+        401
+      );
     }
+    // Clear the counters so a legitimate user who fumbles is not penalised.
+    await Promise.all([env.SETTINGS.delete(ipKey), env.SETTINGS.delete(globalKey)]);
     const token = await makeSession(env);
     return json(
       { ok: true },
