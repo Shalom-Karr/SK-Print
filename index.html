@@ -62,6 +62,12 @@
 
     <!-- VIEW -->
     <section id="panel-view" class="panel hidden">
+      <div id="usageBar" class="hidden flex items-center justify-between gap-4 mb-4 px-4 py-3 bg-white border border-slate-200 rounded-xl">
+        <p class="text-sm text-slate-600"><span id="usageText" class="font-medium"></span></p>
+        <button id="clearAll" class="text-sm font-medium text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg transition">
+          Delete all
+        </button>
+      </div>
       <div id="fileList" class="space-y-2"></div>
       <p id="emptyMsg" class="hidden text-center text-slate-500 py-16">Nothing uploaded yet.</p>
     </section>
@@ -172,8 +178,13 @@ $('#uploadBtn').onclick = async () => {
 };
 
 async function loadFiles() {
-  const { files } = await api('files').then(r => r.json());
+  const { files, total } = await api('files').then(r => r.json());
   $('#emptyMsg').classList.toggle('hidden', files.length > 0);
+  $('#usageBar').classList.toggle('hidden', files.length === 0);
+  if (total) {
+    $('#usageText').textContent =
+      `${total.count} file${total.count === 1 ? '' : 's'} · ${fmt(total.bytes)} stored`;
+  }
   $('#fileList').innerHTML = files.map(f => `
     <div class="flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3">
       <span class="text-xl">${f.type === 'application/pdf' ? '📄' : '🖼️'}</span>
@@ -189,6 +200,16 @@ async function loadFiles() {
 window.del = async id => {
   if (!confirm('Delete this file?')) return;
   await api('file/' + id, { method: 'DELETE' });
+  loadFiles();
+};
+
+$('#clearAll').onclick = async () => {
+  const { total } = await api('files').then(r => r.json());
+  if (!confirm(`Delete all ${total.count} files (${fmt(total.bytes)})? This cannot be undone.`)) return;
+  const btn = $('#clearAll');
+  btn.disabled = true; btn.textContent = 'Deleting…';
+  await api('files', { method: 'DELETE' });
+  btn.disabled = false; btn.textContent = 'Delete all';
   loadFiles();
 };
 

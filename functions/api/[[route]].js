@@ -152,7 +152,26 @@ export async function onRequest(context) {
     const { results } = await env.DB.prepare(
       'SELECT id, name, type, size, uploaded_at FROM files ORDER BY uploaded_at DESC LIMIT 500'
     ).all();
-    return json({ files: results || [] });
+    // Totals come from the whole table, not the 500-row page, so the storage
+    // figure stays honest once there are more files than the list shows.
+    const totals = await env.DB.prepare(
+      'SELECT COUNT(*) AS count, COALESCE(SUM(size), 0) AS bytes FROM files'
+    ).first();
+    return json({ files: results || [], total: totals || { count: 0, bytes: 0 } });
+  }
+
+  // Bulk cleanup. KV has no batch delete, so keys go one at a time, in chunks
+  // so a large clear-out does not open hundreds of concurrent requests. D1 is
+  // emptied only after the blobs are gone, so an interrupted delete leaves rows
+  // pointing at real files rather than orphaning blobs with no index.
+  if (route === 'files' && method === 'DELETE') {
+    const { results } = await env.DB.prepare('SELECT id FROM files').all();
+    const ids = (results || []).map((r) => r.id);
+    for (let i = 0; i < ids.length; i += 25) {
+      await Promise.all(ids.slice(i, i + 25).map((k) => env.FILES.delete(k)));
+    }
+    await env.DB.prepare('DELETE FROM files').run();
+    return json({ deleted: ids.length });
   }
 
   if (route === 'upload' && method === 'POST') {
@@ -172,8 +191,10 @@ export async function onRequest(context) {
         continue;
       }
       const id = crypto.randomUUID();
-      await env.FILES.put(id, file.stream(), {
-        httpMetadata: { contentType: file.type },
+      // KV takes the whole body in memory. That is why MAX_BYTES is 25 MB - it
+      // is KV's hard per-value ceiling, not an arbitrary choice.
+      await env.FILES.put(id, await file.arrayBuffer(), {
+        metadata: { type: file.type, name: file.name },
       });
       await env.DB.prepare(
         'INSERT INTO files (id, name, type, size, uploaded_at) VALUES (?, ?, ?, ?, ?)'
@@ -192,13 +213,13 @@ export async function onRequest(context) {
       .first();
     if (!row) return json({ error: 'Not found' }, 404);
 
-    const object = await env.FILES.get(id);
-    if (!object) return json({ error: 'File missing from storage' }, 404);
+    const body = await env.FILES.get(id, { type: 'stream' });
+    if (!body) return json({ error: 'File missing from storage' }, 404);
 
     const disposition = new URL(request.url).searchParams.has('download')
       ? `attachment; filename="${row.name.replace(/"/g, '')}"`
       : 'inline';
-    return new Response(object.body, {
+    return new Response(body, {
       headers: {
         'content-type': row.type,
         'content-disposition': disposition,

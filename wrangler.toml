@@ -1,23 +1,25 @@
-name = "sk-print"
+name = "skprint"
 pages_build_output_dir = "."
 compatibility_date = "2026-07-30"
 
-# Fill the ids in after running the wrangler create commands in the README,
-# or set these as bindings in the Pages dashboard instead - either works.
-
-[[r2_buckets]]
+# File bytes. KV caps values at 25 MiB, which is why MAX_BYTES in the API is
+# 25 MB. R2 is the better home for blobs and the code moves over with a handful
+# of line changes - see "Upgrading to R2" in the README - but R2 needs a
+# one-time activation in the dashboard and KV did not.
+[[kv_namespaces]]
 binding = "FILES"
-bucket_name = "sk-print"
+id = "889a2d4256ba4a2b92591f238bb6908a"
 
-[[d1_databases]]
-binding = "DB"
-database_name = "sk-print"
-database_id = "REPLACE_WITH_D1_ID"
-
+# Current PIN, seeded from LOGIN_PIN on first use.
 [[kv_namespaces]]
 binding = "SETTINGS"
-id = "REPLACE_WITH_KV_ID"
+id = "c2341f06166f4cf2a69ec4d9ab8d8f25"
 
-# LOGIN_PIN and SESSION_SECRET are deliberately NOT in this file - they are
-# secrets and belong in the dashboard as encrypted environment variables, or
-# via `wrangler pages secret put`.
+# File metadata, so listing is one indexed query instead of a KV scan.
+[[d1_databases]]
+binding = "DB"
+database_name = "skprint"
+database_id = "2425a918-6f58-421c-96b1-45079b6610d1"
+
+# LOGIN_PIN and SESSION_SECRET are deliberately absent - they are secrets and
+# belong in the dashboard as encrypted environment variables.
