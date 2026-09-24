@@ -35,7 +35,11 @@ table to expire. Rotating `SESSION_SECRET` invalidates every session at once.
 ## Limits
 
 **25 MB per file**, enforced server-side. That is KV's hard per-value ceiling,
-not an arbitrary number. Accepted types: PDF, PNG, JPEG, WebP, GIF, HEIC, TIFF.
+not an arbitrary number. Accepted types: PDF, PNG, JPEG, WebP, GIF, HEIC, TIFF,
+plus script/text files by extension (`.ps1`, `.psm1`, `.psd1`, `.bat`, `.cmd`,
+`.reg`, `.txt`). Scripts are matched by extension rather than MIME — a browser
+reports an unreliable type for `.ps1` — and are stored and served as UTF-8 text
+so a plain `iwr <url>` on the printer machine gets the script verbatim.
 Anything else is rejected per-file with a reason, so one bad file in a batch
 does not fail the rest.
 

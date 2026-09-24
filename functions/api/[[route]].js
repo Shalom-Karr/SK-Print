@@ -31,6 +31,21 @@ const ALLOWED = new Set([
   'image/tiff',
 ]);
 
+// Script / text files are allowed by EXTENSION, not MIME: a browser reports an
+// unreliable type for .ps1 (usually empty or application/octet-stream), so the
+// extension is the dependable signal. They are stored and served as UTF-8 text
+// so a plain `iwr <url>` / `curl` on the printer machine gets the script bytes
+// verbatim rather than an opaque octet-stream.
+const ALLOWED_EXT = new Set(['ps1', 'psm1', 'psd1', 'bat', 'cmd', 'reg', 'txt']);
+const extOf = (name) => {
+  const m = /\.([^.\\/]+)$/.exec(name || '');
+  return m ? m[1].toLowerCase() : '';
+};
+const isAllowed = (file) => ALLOWED.has(file.type) || ALLOWED_EXT.has(extOf(file.name));
+// Force script/text uploads to a text content-type; leave real image/pdf types alone.
+const storedType = (file) =>
+  ALLOWED_EXT.has(extOf(file.name)) ? 'text/plain; charset=utf-8' : file.type;
+
 const json = (data, status = 200, headers = {}) =>
   new Response(JSON.stringify(data), {
     status,
@@ -230,24 +245,25 @@ export async function onRequest(context) {
     const saved = [];
     const rejected = [];
     for (const file of uploads) {
-      if (!ALLOWED.has(file.type)) {
-        rejected.push({ name: file.name, reason: `Unsupported type ${file.type || 'unknown'}` });
+      if (!isAllowed(file)) {
+        rejected.push({ name: file.name, reason: `Unsupported type ${file.type || extOf(file.name) || 'unknown'}` });
         continue;
       }
       if (file.size > MAX_BYTES) {
         rejected.push({ name: file.name, reason: `Over ${MAX_BYTES / 1024 / 1024} MB` });
         continue;
       }
+      const type = storedType(file);
       const id = crypto.randomUUID();
       // KV takes the whole body in memory. That is why MAX_BYTES is 25 MB - it
       // is KV's hard per-value ceiling, not an arbitrary choice.
       await env.FILES.put(id, await file.arrayBuffer(), {
-        metadata: { type: file.type, name: file.name },
+        metadata: { type, name: file.name },
       });
       await env.DB.prepare(
         'INSERT INTO files (id, name, type, size, uploaded_at) VALUES (?, ?, ?, ?, ?)'
       )
-        .bind(id, file.name, file.type, file.size, new Date().toISOString())
+        .bind(id, file.name, type, file.size, new Date().toISOString())
         .run();
       saved.push({ id, name: file.name });
     }

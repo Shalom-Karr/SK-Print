@@ -51,8 +51,8 @@
         class="block border-2 border-dashed border-slate-300 rounded-2xl p-12 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition">
         <div class="text-4xl mb-3">📤</div>
         <p class="font-semibold">Drop files here, or click to choose</p>
-        <p class="text-sm text-slate-500 mt-1">PDF, PNG, JPEG, WebP, GIF, HEIC, TIFF &middot; up to 25&nbsp;MB each</p>
-        <input id="fileInput" type="file" multiple accept="application/pdf,image/*" class="hidden">
+        <p class="text-sm text-slate-500 mt-1">PDF, images, and scripts (.ps1, .bat, .cmd, .reg, .txt) &middot; up to 25&nbsp;MB each</p>
+        <input id="fileInput" type="file" multiple accept="application/pdf,image/*,.ps1,.psm1,.psd1,.bat,.cmd,.reg,.txt" class="hidden">
       </label>
       <div id="queueBar" class="hidden items-center justify-between gap-3 mt-6 mb-2">
         <p class="text-sm text-slate-500"><span id="queueCount"></span> &middot; drag to reorder</p>
@@ -207,7 +207,7 @@ function renderQueue() {
     <div draggable="true" data-i="${i}"
          class="qrow flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3 cursor-grab active:cursor-grabbing">
       <span class="text-slate-300 select-none">⠿</span>
-      <span class="text-xl">${f.type === 'application/pdf' ? '📄' : '🖼️'}</span>
+      <span class="text-xl">${iconFor(f)}</span>
       <div class="flex-1 min-w-0">
         <p class="font-medium truncate">${esc(f.name)}</p>
         <p class="text-xs text-slate-500">${fmt(f.size)}</p>
@@ -272,7 +272,7 @@ async function loadFiles() {
   }
   $('#fileList').innerHTML = files.map(f => `
     <div class="flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3">
-      <span class="text-xl">${f.type === 'application/pdf' ? '📄' : '🖼️'}</span>
+      <span class="text-xl">${iconFor(f)}</span>
       <div class="flex-1 min-w-0">
         <p class="font-medium truncate">${esc(f.name)}</p>
         <p class="text-xs text-slate-500">${fmt(f.size)} &middot; ${new Date(f.uploaded_at).toLocaleString()}</p>
@@ -320,6 +320,15 @@ $('#pinForm').onsubmit = async e => {
   }
 };
 
+// 📄 PDF, 🖼️ image, 📜 script/text, 📎 anything else. Falls back to the name's
+// extension because a stored script's type is text/plain, not an image/* MIME.
+const iconFor = f => {
+  const t = f.type || '';
+  if (t === 'application/pdf') return '📄';
+  if (t.startsWith('image/')) return '🖼️';
+  if (/\.(ps1|psm1|psd1|bat|cmd|reg|txt)$/i.test(f.name || '') || t.startsWith('text/')) return '📜';
+  return '📎';
+};
 const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = b => b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
 
